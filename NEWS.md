@@ -1,5 +1,13 @@
 # ptcalc News
 
+## Version 0.1.1 (2026-04-22)
+
+### Changed
+- `sample_group` removida del contrato de entrada de datos. La columna nunca fue
+  utilizada por las funciones del paquete; si estaba presente en los datos de
+  entrada, era ignorada silenciosamente. Los flujos de datos que la incluyan
+  deben omitirla.
+
 ## Version 0.1.0 (2025-01-26)
 
 Initial release of ptcalc package for proficiency testing calculations.

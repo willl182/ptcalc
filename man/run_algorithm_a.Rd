@@ -4,42 +4,58 @@
 \alias{run_algorithm_a}
 \title{ISO 13528 Algorithm A - Robust Mean and Standard Deviation}
 \usage{
-run_algorithm_a(values, ids = NULL, max_iter = 50)
+run_algorithm_a(values, ids = NULL, max_iter = 100, tol = 1e-10)
 }
 \arguments{
 \item{values}{A numeric vector of participant results.}
 
 \item{ids}{Optional vector of participant identifiers (same length as values).}
 
-\item{max_iter}{Maximum number of iterations (default: 50).}
+\item{max_iter}{Maximum number of iterations (default: 100).}
+
+\item{tol}{Numerical guard tolerance for x* and s* (default: 1e-10). The
+primary convergence criterion is 3rd significant figure comparison per
+ISO 13528:2022 NOTE 1; tol only catches machine-precision stalls.}
 }
 \value{
 A list containing:
 \itemize{
 \item assigned_value: Robust mean (x*)
 \item robust_sd: Robust standard deviation (s*)
-\item iterations: Data frame of iteration history
-\item winsorized_values: Data frame with original and winsorized values
+\item iterations: Data frame of iteration history (includes signif3_* columns)
+\item iteration_detail: Data frame with per-participant detail per iteration
+\item weights: Data frame with final winsorized values per participant
+\item winsorized_values: Backward-compatible alias of weights
 \item converged: Logical indicating convergence
-\item n_participants: Number of participants used
+\item convergence_method: \code{"signif3"} (ISO 13528:2022 NOTE 1) or
+\code{"numerical_guard"} (machine-precision stall) or \code{NA} if not converged
+\item n_winsorized: Number of winsorized observations in final iteration
+\item n: Number of valid observations used
+\item n_participants: Backward-compatible alias of n
 \item error: Error message or NULL if successful
 }
 }
 \description{
 Iterative algorithm for computing robust estimates of location (x*) and
-scale (s*) from proficiency testing data using Winsorization.
+scale (s*) from proficiency testing data using winsorization.
 }
 \details{
-Algorithm A is an iterative procedure that computes robust estimates:
+Algorithm A is the iterative winsorization procedure from ISO 13528:2022,
+Annex C:
 \enumerate{
-\item Initialize with median (x*) and scaled MAD (s*)
-\item Compute delta: δ = 1.5 × s*
-\item Winsorize values: clamp to \code{[x* - δ, x* + δ]}
-4. Update x* = mean(winsorized), s* = 1.134 × sqrt(Σ(x* - x)²/(p-1))
-\item Repeat until convergence (no change in 3rd significant figure)
+\item Initialize: x* = median(xi), s* = 1.483 * MAD(xi)
+\item Compute delta = 1.5 * s*
+\item Winsorize: x*_i = clamp(xi, x* - delta, x* + delta)
+\item Update: x* = mean(x*_i), s* = 1.134 * sd(x*_i)
+\item Repeat until no change in 3rd significant figure of x* and s*
+(ISO 13528:2022 NOTE 1). A numerical guard (tol = 1e-10) catches
+machine-precision stalls.
 }
 
-Reference: ISO 13528:2022, Annex C.3
+The factor 1.134 corrects the bias introduced by winsorization.
+The sd() uses (p - 1) denominator (sample standard deviation).
+
+Reference: ISO 13528:2022, Annex C
 }
 \examples{
 # Robust mean/sd with outlier in data

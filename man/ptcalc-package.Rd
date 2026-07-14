@@ -6,7 +6,7 @@
 \alias{ptcalc}
 \title{ptcalc: Proficiency Testing Calculations}
 \description{
-Functions for proficiency testing analysis per ISO 13528:2022 and ISO 17043:2024.
+Functions for proficiency testing analysis per ISO 13528:2022 and ISO 17043:2023.
 }
 \section{Robust Statistics}{
 
@@ -41,6 +41,11 @@ Functions for proficiency testing analysis per ISO 13528:2022 and ISO 17043:2024
 
 \author{
 \strong{Maintainer}: Wilson Rafael Salas Chavez \email{wrsalasc@unal.edu.co} (\href{https://orcid.org/0000-0003-4757-117X}{ORCID}) (Lead Developer)
+
+Authors:
+\itemize{
+  \item Wilson Rafael Salas Chavez \email{wrsalasc@unal.edu.co} (\href{https://orcid.org/0000-0003-4757-117X}{ORCID}) (Lead Developer)
+}
 
 Other contributors:
 \itemize{

@@ -149,13 +149,31 @@ calculate_homogeneity_criterion <- function(sigma_pt) {
 #'
 #' Reference: ISO 13528:2022, Section 9.2.4
 #'
-#' @param sigma_pt Standard deviation for proficiency assessment (from MADe)
-#' @param u_sigma_pt Uncertainty of sigma_pt
-#' @return The expanded criterion value
+#' @param sigma_pt Standard deviation for proficiency assessment (from MADe).
+#' @param u_sigma_pt Uncertainty of sigma_pt for the uncertainty branch.
+#' @param sw Within-item standard deviation for the lookup-table branch.
+#' @param g Number of items for the lookup-table branch; clamped to 7--20.
+#' @return The expanded criterion for the \code{u_sigma_pt} branch, or the
+#'   quadratic table expression for the \code{sw}/\code{g} branch.
 #' @export
-calculate_homogeneity_criterion_expanded <- function(sigma_pt, u_sigma_pt) {
-  c_criterion <- 0.3 * sigma_pt
-  c_criterion * sqrt(1 + (u_sigma_pt/sigma_pt)^2)
+calculate_homogeneity_criterion_expanded <- function(sigma_pt, u_sigma_pt = NULL, sw = NULL, g = NULL) {
+  if (!is.null(u_sigma_pt) && is.null(sw) && is.null(g)) {
+    c_criterion <- 0.3 * sigma_pt
+    c_criterion * sqrt(1 + (u_sigma_pt / sigma_pt)^2)
+  } else if (!is.null(sw) && !is.null(g)) {
+    f_table <- data.frame(
+      g = 7:20,
+      f1 = c(2.10, 2.01, 1.94, 1.88, 1.83, 1.79, 1.75, 1.72, 1.69, 1.67, 1.64, 1.62, 1.60, 1.59),
+      f2 = c(1.43, 1.25, 1.11, 1.01, 0.93, 0.86, 0.80, 0.75, 0.71, 0.68, 0.64, 0.62, 0.59, 0.57)
+    )
+    g_clamped <- max(7, min(20, g))
+    idx <- which(f_table$g == g_clamped)
+    f1 <- f_table$f1[idx]
+    f2 <- f_table$f2[idx]
+    f1 * (0.3 * sigma_pt)^2 + f2 * sw^2
+  } else {
+    stop("Invalid arguments: provide either u_sigma_pt or both sw and g")
+  }
 }
 
 #' Evaluate homogeneity against criterion

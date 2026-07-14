@@ -71,42 +71,46 @@ calculate_mad_e <- function(x) {
   1.483 * mad_value
 }
 
-# Helper: Check if two values are equal to 3 significant figures
-same_3sf <- function(a, b) {
-  if (!is.finite(a) || !is.finite(b)) {
-    return(FALSE)
-  }
-  if (a == 0 && b == 0) {
-    return(TRUE)
-  }
-  signif(a, 3) == signif(b, 3)
-}
-
 #' ISO 13528 Algorithm A - Robust Mean and Standard Deviation
 #'
 #' Iterative algorithm for computing robust estimates of location (x*) and
-#' scale (s*) from proficiency testing data using Winsorization.
+#' scale (s*) from proficiency testing data using winsorization.
 #'
 #' @details
-#' Algorithm A is an iterative procedure that computes robust estimates:
-#' 1. Initialize with median (x*) and scaled MAD (s*)
-#' 2. Compute delta: δ = 1.5 × s*
-#' 3. Winsorize values: clamp to \code{[x* - δ, x* + δ]}
-#' 4. Update x* = mean(winsorized), s* = 1.134 × sqrt(Σ(x* - x)²/(p-1))
-#' 5. Repeat until convergence (no change in 3rd significant figure)
+#' Algorithm A is the iterative winsorization procedure from ISO 13528:2022,
+#' Annex C:
+#' 1. Initialize: x* = median(xi), s* = 1.483 * MAD(xi)
+#' 2. Compute delta = 1.5 * s*
+#' 3. Winsorize: x*_i = clamp(xi, x* - delta, x* + delta)
+#' 4. Update: x* = mean(x*_i), s* = 1.134 * sd(x*_i)
+#' 5. Repeat until no change in 3rd significant figure of x* and s*
+#'    (ISO 13528:2022 NOTE 1). A numerical guard (tol = 1e-10) catches
+#'    machine-precision stalls.
 #'
-#' Reference: ISO 13528:2022, Annex C.3
+#' The factor 1.134 corrects the bias introduced by winsorization.
+#' The sd() uses (p - 1) denominator (sample standard deviation).
+#'
+#' Reference: ISO 13528:2022, Annex C
 #'
 #' @param values A numeric vector of participant results.
 #' @param ids Optional vector of participant identifiers (same length as values).
-#' @param max_iter Maximum number of iterations (default: 50).
+#' @param max_iter Maximum number of iterations (default: 100).
+#' @param tol Numerical guard tolerance for x* and s* (default: 1e-10). The
+#'   primary convergence criterion is 3rd significant figure comparison per
+#'   ISO 13528:2022 NOTE 1; tol only catches machine-precision stalls.
 #' @return A list containing:
 #'   - assigned_value: Robust mean (x*)
 #'   - robust_sd: Robust standard deviation (s*)
-#'   - iterations: Data frame of iteration history
-#'   - winsorized_values: Data frame with original and winsorized values
+#'   - iterations: Data frame of iteration history (includes signif3_* columns)
+#'   - iteration_detail: Data frame with per-participant detail per iteration
+#'   - weights: Data frame with final winsorized values per participant
+#'   - winsorized_values: Backward-compatible alias of weights
 #'   - converged: Logical indicating convergence
-#'   - n_participants: Number of participants used
+#'   - convergence_method: `"signif3"` (ISO 13528:2022 NOTE 1) or
+#'     `"numerical_guard"` (machine-precision stall) or `NA` if not converged
+#'   - n_winsorized: Number of winsorized observations in final iteration
+#'   - n: Number of valid observations used
+#'   - n_participants: Backward-compatible alias of n
 #'   - error: Error message or NULL if successful
 #'
 #' @examples
@@ -118,7 +122,18 @@ same_3sf <- function(a, b) {
 #'
 #' @seealso \code{\link{calculate_niqr}}, \code{\link{calculate_mad_e}}
 #' @export
-run_algorithm_a <- function(values, ids = NULL, max_iter = 50) {
+run_algorithm_a <- function(values, ids = NULL, max_iter = 100, tol = 1e-10) {
+  algo_a_significant_figures <- 3L
+
+  stable_sigfig_value <- function(x, digits = algo_a_significant_figures) {
+    if (!is.finite(x) || x == 0) {
+      return(x)
+    }
+
+    decimal_places <- max(digits - 1L - floor(log10(abs(x))), 0L)
+    round(x, digits = decimal_places)
+  }
+
   # Remove non-finite values
   mask <- is.finite(values)
   values <- values[mask]
@@ -136,29 +151,56 @@ run_algorithm_a <- function(values, ids = NULL, max_iter = 50) {
       assigned_value = NA_real_,
       robust_sd = NA_real_,
       iterations = data.frame(),
+      iteration_detail = data.frame(),
+      weights = data.frame(),
       winsorized_values = data.frame(),
       converged = FALSE,
+      n_winsorized = NA_integer_,
+      n = p,
       n_participants = p
     ))
   }
 
-  # Initial estimates: median and scaled MAD (Formula C.6)
+  # Step 1: Initial estimates (ISO 13528:2022, Annex C, step 1)
   x_star <- stats::median(values, na.rm = TRUE)
   s_star <- 1.483 * stats::median(abs(values - x_star), na.rm = TRUE)
+  initial_median <- x_star
+  initial_mad_e <- s_star
 
-  # Handle s* = 0 case (ISO NOTE 2): use sample standard deviation as fallback
+  # Handle zero or near-zero dispersion
   if (!is.finite(s_star) || s_star < .Machine$double.eps) {
     s_star <- stats::sd(values, na.rm = TRUE)
+    initial_s_star_source <- "Desviacion tipica aritmetica"
+  } else {
+    initial_s_star_source <- "MADe"
   }
+  initial_s_star <- s_star
 
-  # If still zero dispersion, return with robust_sd = 0 (no error needed)
   if (!is.finite(s_star) || s_star < .Machine$double.eps) {
+    weights_df <- data.frame(
+      id = ids,
+      value = values,
+      winsorized = values,
+      is_winsorized = FALSE,
+      original = values,
+      stringsAsFactors = FALSE
+    )
+
     return(list(
       assigned_value = x_star,
       robust_sd = 0,
-      iterations = data.frame(iteration = 0, x_star = x_star, s_star = 0, stringsAsFactors = FALSE),
-      winsorized_values = data.frame(id = ids, original = values, winsorized = values, stringsAsFactors = FALSE),
+      iterations = data.frame(),
+      iteration_detail = data.frame(),
+      weights = weights_df,
+      winsorized_values = weights_df[, c("id", "original", "winsorized"), drop = FALSE],
       converged = TRUE,
+      n_winsorized = 0L,
+      n = p,
+      initial_median = initial_median,
+      initial_mad_e = initial_mad_e,
+      initial_s_star = initial_s_star,
+      initial_s_star_source = initial_s_star_source,
+      tolerance = tol,
       n_participants = p,
       error = NULL
     ))
@@ -166,54 +208,132 @@ run_algorithm_a <- function(values, ids = NULL, max_iter = 50) {
 
   # Iteration records
   iteration_records <- list()
+  iteration_detail <- list()
   converged <- FALSE
+  convergence_method <- NA_character_
 
   for (iter in seq_len(max_iter)) {
+    # Step 2: Compute delta
     delta <- 1.5 * s_star
 
-    # Winsorize: clamp values to [x* - δ, x* + δ] (Formula C.8)
-    x_winsorized <- pmax(pmin(values, x_star + delta), x_star - delta)
+    # Step 3: Winsorize
+    lower <- x_star - delta
+    upper <- x_star + delta
+    x_winsorized <- pmax(pmin(values, upper), lower)
+    is_winsorized <- (values < lower) | (values > upper)
 
-    # Updated estimates (Formulas C.9, C.10)
+    # Step 4: Updated estimates
     x_new <- mean(x_winsorized)
     s_new <- 1.134 * sqrt(sum((x_winsorized - x_new)^2) / (p - 1))
 
     if (!is.finite(s_new) || s_new < .Machine$double.eps) {
+      iterations_df <- if (length(iteration_records) > 0) {
+        do.call(rbind, iteration_records)
+      } else {
+        data.frame()
+      }
+
+      iteration_detail_df <- if (length(iteration_detail) > 0) {
+        do.call(rbind, iteration_detail)
+      } else {
+        data.frame()
+      }
+
+      weights_df <- data.frame(
+        id = ids,
+        value = values,
+        winsorized = x_winsorized,
+        is_winsorized = is_winsorized,
+        original = values,
+        stringsAsFactors = FALSE
+      )
+
       return(list(
-        error = "Algorithm A collapsed due to zero standard deviation.",
+        error = "Algorithm A collapsed: s* converged to zero.",
         assigned_value = x_new,
         robust_sd = 0,
-        iterations = if (length(iteration_records) > 0) do.call(rbind, iteration_records) else data.frame(),
-        winsorized_values = data.frame(),
+        iterations = iterations_df,
+        iteration_detail = iteration_detail_df,
+        weights = weights_df,
+        winsorized_values = weights_df[, c("id", "original", "winsorized"), drop = FALSE],
         converged = FALSE,
+        n_winsorized = sum(is_winsorized),
+        n = p,
+        initial_median = initial_median,
+        initial_mad_e = initial_mad_e,
+        initial_s_star = initial_s_star,
+        initial_s_star_source = initial_s_star_source,
+        tolerance = tol,
         n_participants = p
       ))
     }
 
-    # Convergence check: 3rd significant figure
-    if (same_3sf(x_star, x_new) && same_3sf(s_star, s_new)) {
-      converged <- TRUE
-      x_star <- x_new
-      s_star <- s_new
-      iteration_records[[iter]] <- data.frame(
-        iteration = iter,
-        x_star = x_new,
-        s_star = s_new,
-        stringsAsFactors = FALSE
-      )
-      break
-    }
+    # Step 5: Convergence check
+    delta_x <- abs(x_new - x_star)
+    delta_s <- abs(s_new - s_star)
+    delta_max <- max(delta_x, delta_s)
 
     iteration_records[[iter]] <- data.frame(
       iteration = iter,
+      x_star_prev = x_star,
+      s_star_prev = s_star,
+      delta_winsor = delta,
+      lower_bound = lower,
+      upper_bound = upper,
+      n_winsorized = sum(is_winsorized),
+      x_star_new = x_new,
+      s_star_new = s_new,
+      delta_x = delta_x,
+      delta_s = delta_s,
+      delta_max = delta_max,
       x_star = x_new,
       s_star = s_new,
+      signif3_x_prev = stable_sigfig_value(x_star),
+      signif3_s_prev = stable_sigfig_value(s_star),
+      signif3_x_new = stable_sigfig_value(x_new),
+      signif3_s_new = stable_sigfig_value(s_new),
+      signif3_converged = stable_sigfig_value(x_new) == stable_sigfig_value(x_star) &&
+                          stable_sigfig_value(s_new) == stable_sigfig_value(s_star),
       stringsAsFactors = FALSE
     )
 
+    iteration_detail[[iter]] <- data.frame(
+      iteration = iter,
+      id = ids,
+      value = values,
+      winsorized = x_winsorized,
+      is_winsorized = is_winsorized,
+      x_star = x_star,
+      s_star = s_star,
+      delta = delta,
+      lower = lower,
+      upper = upper,
+      stringsAsFactors = FALSE
+    )
+
+    # Primary: ISO 13528:2022 NOTE 1 — 3rd significant figure
+    # Must compare before updating x_star/s_star
+    sig_converged <- stable_sigfig_value(x_new) == stable_sigfig_value(x_star) &&
+                     stable_sigfig_value(s_new) == stable_sigfig_value(s_star)
+    # Secondary: numerical guard against machine-precision stall
+    num_converged <- delta_x < tol && delta_s < tol
+
     x_star <- x_new
     s_star <- s_new
+
+    if (sig_converged || num_converged) {
+      converged <- TRUE
+      convergence_method <- if (sig_converged) "signif3" else "numerical_guard"
+      break
+    }
   }
+
+  # Final winsorized values
+  delta_final <- 1.5 * s_star
+  lower_final <- x_star - delta_final
+  upper_final <- x_star + delta_final
+  winsorized_final <- pmax(pmin(values, upper_final), lower_final)
+  is_winsorized_final <- (values < lower_final) | (values > upper_final)
 
   iterations_df <- if (length(iteration_records) > 0) {
     do.call(rbind, iteration_records)
@@ -221,13 +341,18 @@ run_algorithm_a <- function(values, ids = NULL, max_iter = 50) {
     data.frame()
   }
 
-  delta <- 1.5 * s_star
-  x_winsorized_final <- pmax(pmin(values, x_star + delta), x_star - delta)
+  iteration_detail_df <- if (length(iteration_detail) > 0) {
+    do.call(rbind, iteration_detail)
+  } else {
+    data.frame()
+  }
 
-  winsorized_df <- data.frame(
+  weights_df <- data.frame(
     id = ids,
+    value = values,
+    winsorized = winsorized_final,
+    is_winsorized = is_winsorized_final,
     original = values,
-    winsorized = x_winsorized_final,
     stringsAsFactors = FALSE
   )
 
@@ -235,8 +360,18 @@ run_algorithm_a <- function(values, ids = NULL, max_iter = 50) {
     assigned_value = x_star,
     robust_sd = s_star,
     iterations = iterations_df,
-    winsorized_values = winsorized_df,
+    iteration_detail = iteration_detail_df,
+    weights = weights_df,
+    winsorized_values = weights_df[, c("id", "original", "winsorized"), drop = FALSE],
     converged = converged,
+    convergence_method = convergence_method,
+    n_winsorized = sum(is_winsorized_final),
+    n = p,
+    initial_median = initial_median,
+    initial_mad_e = initial_mad_e,
+    initial_s_star = initial_s_star,
+    initial_s_star_source = initial_s_star_source,
+    tolerance = tol,
     n_participants = p,
     error = NULL
   )

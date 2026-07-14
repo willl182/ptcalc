@@ -1,6 +1,6 @@
 #' ptcalc: Proficiency Testing Calculations
 #'
-#' Functions for proficiency testing analysis per ISO 13528:2022 and ISO 17043:2024.
+#' Functions for proficiency testing analysis per ISO 13528:2022 and ISO 17043:2023.
 #'
 #' @section Robust Statistics:
 #' \itemize{

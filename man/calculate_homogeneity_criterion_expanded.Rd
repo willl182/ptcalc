@@ -4,18 +4,32 @@
 \alias{calculate_homogeneity_criterion_expanded}
 \title{Calculate expanded homogeneity criterion}
 \usage{
-calculate_homogeneity_criterion_expanded(sigma_pt, u_sigma_pt)
+calculate_homogeneity_criterion_expanded(
+  sigma_pt,
+  u_sigma_pt = NULL,
+  sw = NULL,
+  g = NULL
+)
 }
 \arguments{
-\item{sigma_pt}{Standard deviation for proficiency assessment (from MADe)}
+\item{sigma_pt}{Standard deviation for proficiency assessment (from MADe).}
 
-\item{u_sigma_pt}{Uncertainty of sigma_pt}
+\item{u_sigma_pt}{Uncertainty of sigma_pt for the uncertainty branch.}
+
+\item{sw}{Within-item standard deviation for the lookup-table branch.}
+
+\item{g}{Number of items for the lookup-table branch; clamped to 7--20.}
 }
 \value{
-The expanded criterion value
+The expanded criterion for the \code{u_sigma_pt} branch, or the
+quadratic table expression for the \code{sw}/\code{g} branch.
 }
 \description{
-c_expanded = c_criterion * sqrt(1 + (u_sigma_pt/sigma_pt)^2)
+Supports two calculation branches. With \code{u_sigma_pt}, it returns
+\code{0.3 * sigma_pt * sqrt(1 + (u_sigma_pt / sigma_pt)^2)}. With
+\code{sw} and \code{g}, it returns the quadratic expression
+\code{F1 * (0.3 * sigma_pt)^2 + F2 * sw^2}; callers must not assume both
+branches have the same dimensional form.
 }
 \details{
 Reference: ISO 13528:2022, Section 9.2.4
